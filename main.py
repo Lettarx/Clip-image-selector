@@ -10,8 +10,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-st.title("Selector de imagenes")
 openai.api_key = os.getenv("OPENAI_API_KEY")
+st.set_page_config(
+    page_title="Selector de imagenes",
+    page_icon=":camera:",
+    layout="wide"
+)
 
 @st.cache_data(show_spinner="Generando imagen....")
 def generar_imagen(prompt):
@@ -36,9 +40,7 @@ def cargar_modelo():
     return model, processor, device
 
 @st.cache_data(show_spinner="Realizando inferencia...")
-def inferencia_CLIP(imagenes,concepto, _model, _processor, device):
-
-
+def inferencia_CLIP(imagenes,concepto, _model, _processor, device) -> np.ndarray:
     #Crear tokens del concepto
     label_token = _processor( 
         text=[concepto], 
@@ -79,39 +81,75 @@ def inferencia_CLIP(imagenes,concepto, _model, _processor, device):
     return scores
 
 if __name__ == "__main__":
+
+    # Inicializar session_state si no existen
+    for key in ["resultados", "concepto", "url_dalle"]:
+        if key not in st.session_state:
+            st.session_state[key] = None
+
     model, processor, device = cargar_modelo()  
 
-    with st.form("subir_informacion"):
-        #subida de imagenes, acepta multiples archivos
-        imagenes = st.file_uploader("Sube una imagen", type=["jpg", "jpeg", "png"],accept_multiple_files=True)
-        #ingreso del concepto a comparar
-        concepto = st.text_input("Concepto de la imagen")
-        #envio del formulario
-        submit_button = st.form_submit_button("Enviar")
+    col1,col2,col3 = st.columns([1, 2, 1])  # Crear tres columnas con proporciones
 
-    if submit_button: 
-        if imagenes and concepto: #si ingresaron imagenes y concepto
-            #Mostrar mensaje de exito
-            st.success("Imagenes y concepto enviados correctamente.")
+    with col2:
+        st.title("Selector de imagenes")
+        
+        with st.form("subir_informacion", width=800): 
+            #subida de imagenes, acepta multiples archivos
+            imagenes = st.file_uploader("Sube una imagen", type=["jpg", "jpeg", "png"],accept_multiple_files=True)
+            #ingreso del concepto a comparar
+            concepto = st.text_input("Concepto de la imagen")
+            #ingreso umbral para generar imagen con DALL-E 3
+            umbral = st.number_input("Umbral para generar imagen con DALL-E 3", min_value=0.0, max_value=1.0, value=0.2, step=0.01)
+            #envio del formulario
+            submit_button = st.form_submit_button("Enviar")
 
-            #generar_img = st.button("Generar Imagen")
+        if submit_button: 
+            if imagenes and concepto: #si ingresaron imagenes y concepto
+                #Mostrar mensaje de exito
+                st.success("Imagenes y concepto enviados correctamente.")
+                imagenes = [Image.open(imagen).convert("RGB") for imagen in imagenes]  # Convertir
+                scores = inferencia_CLIP(imagenes, concepto, model, processor, device)
+                result_ordenados = sorted(zip(imagenes, scores), key=lambda x: x[1], reverse=True)
 
-            # if generar_img:
-            #     url = generar_imagen(concepto)
-            #     st.image(url, caption="Imagen generada por DALL-E 3", width=300)
-            
-            imagenes = [Image.open(imagen).convert("RGB") for imagen in imagenes]  # Convertir
-            scores = inferencia_CLIP(imagenes, concepto, model, processor, device)
+                #guardar en session state
+                st.session_state["resultados"] = result_ordenados
+                st.session_state["mejor_score"] = result_ordenados[0][1][0] if result_ordenados else None
+                st.session_state["concepto"] = concepto
+                st.session_state["url_dalle"] = None  # inicializar la URL de la imagen de dalle
+                st.session_state["umbral"] = umbral
+            else:
+                st.error("Por favor, sube al menos una imagen y proporciona un concepto.")
 
-            for i, (img, score) in enumerate(zip(imagenes, scores)):
-                #classname image container si score supera umbral el container es color verde 
-                if score[0] > 0.2:
-                    st.image(img, caption=f"Imagen {i+1} - Score: {score[0]:.4f}",width=300)
-                else:
-                    st.image(img, caption=f"Imagen {i+1} - Score: {score[0]:.4f}",width=300)  # Mostrar la imagen con el score
-            
-            url = generar_imagen(concepto)
-            st.image(url, caption="Imagen generada por DALL-E 3", width=300)
-    
-        else:
-            st.error("Por favor, sube al menos una imagen y proporciona un concepto.")
+
+    if st.session_state["resultados"]:
+        colA, colB = st.columns(2)  # Crear dos columnas 
+                
+        with colA:
+            st.subheader("Ranking según el concepto")
+                    
+                    
+            # Mostrar las imágenes y sus scores
+            if "resultados" in st.session_state:
+                for i, (img, score) in enumerate(st.session_state["resultados"]):
+                    if score[0] > 0.2:
+                        st.markdown(f"#### <span style='color: green;'>{i+1}.- Score: {score[0]:.4f}</span>", unsafe_allow_html=True)
+                        st.image(img,width=300)
+                    else:
+                        st.markdown(f"#### <span style='color: red;'>{i+1}.- Score: {score[0]:.4f}</span>", unsafe_allow_html=True)
+                        st.image(img,width=300)  
+        with colB:
+            st.subheader("Generar imagen con DALL-E 3")
+            if st.session_state["mejor_score"] < st.session_state["umbral"]:
+                # Generar imagen con DALL-E 3
+                if st.button("Generar imagen con DALL-E 3", key="generar_imagen_dalle"):
+                    #url = generar_imagen(concepto)
+                    url = "imagenDalle.png" #simular la generacion de imagen
+                    st.session_state["url_dalle"] = url
+
+                if st.session_state.get("url_dalle"):
+                    st.image(st.session_state["url_dalle"], caption="Imagen generada por DALL-E 3", width=300)
+                    #st.image("imagenDalle.png", caption="Imagen generada por DALL-E 3", width=300)
+            else:
+                st.warning("El score de la mejor imagen es mayor al umbral, no se generará una imagen con DALL-E 3.")
+            st.session_state["url_dalle"] = None
