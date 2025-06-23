@@ -1,3 +1,4 @@
+"""Pagina de Streamlit para seleccionar imagenes utilizando CLIP y generar imagenes con DALL-E 3"""
 import streamlit as st
 import torch
 import numpy as np
@@ -10,8 +11,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
-st.set_page_config(
+openai.api_key = os.getenv("OPENAI_API_KEY") #asignar la clave de la API de OpenAI desde el archivo .env
+st.set_page_config( #configurar la pagina de streamlit
     page_title="Selector de imagenes",
     page_icon=":camera:",
     layout="wide"
@@ -19,6 +20,7 @@ st.set_page_config(
 
 @st.cache_data(show_spinner="Generando imagen....")
 def generar_imagen(prompt):
+    """Genera una imagen utilizando DALL-E 3 a partir de un prompt"""
     response = openai.images.generate(
         model="dall-e-3",
         prompt=prompt,
@@ -28,6 +30,7 @@ def generar_imagen(prompt):
 
 @st.cache_resource(show_spinner="Cargando modelo...")
 def cargar_modelo():
+    """Carga el modelo CLIP y el procesador"""
     #defino dispositivo a utilizar cpu o cuda(gpu)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -41,6 +44,7 @@ def cargar_modelo():
 
 @st.cache_data(show_spinner="Realizando inferencia...")
 def inferencia_CLIP(imagenes,concepto, _model, _processor, device) -> np.ndarray:
+    """Realiza la inferencia utilizando CLIP para obtener los scores de similitud entre las imagenes y el concepto"""
     #Crear tokens del concepto
     label_token = _processor( 
         text=[concepto], 
@@ -83,7 +87,7 @@ def inferencia_CLIP(imagenes,concepto, _model, _processor, device) -> np.ndarray
 if __name__ == "__main__":
 
     # Inicializar session_state si no existen
-    for key in ["resultados", "concepto", "url_dalle"]:
+    for key in ["resultados", "concepto", "url_dalle", "mejor_score", "umbral"]:
         if key not in st.session_state:
             st.session_state[key] = None
 
@@ -108,9 +112,10 @@ if __name__ == "__main__":
             if imagenes and concepto: #si ingresaron imagenes y concepto
                 #Mostrar mensaje de exito
                 st.success("Imagenes y concepto enviados correctamente.")
-                imagenes = [Image.open(imagen).convert("RGB") for imagen in imagenes]  # Convertir
-                scores = inferencia_CLIP(imagenes, concepto, model, processor, device)
-                result_ordenados = sorted(zip(imagenes, scores), key=lambda x: x[1], reverse=True)
+
+                imagenes = [Image.open(imagen).convert("RGB") for imagen in imagenes]  # Convertir imagenes a formato RGB
+                scores = inferencia_CLIP(imagenes, concepto, model, processor, device) # Realizar la inferencia con CLIP
+                result_ordenados = sorted(zip(imagenes, scores), key=lambda x: x[1], reverse=True) # Ordenar las imagenes por score de mayor a menor
 
                 #guardar en session state
                 st.session_state["resultados"] = result_ordenados
@@ -125,31 +130,32 @@ if __name__ == "__main__":
     if st.session_state["resultados"]:
         colA, colB = st.columns(2)  # Crear dos columnas 
                 
-        with colA:
+        with colA: #Inferencia CLIP y mostrar resultados de las imagenes subidas
             st.subheader("Ranking según el concepto")
-                    
                     
             # Mostrar las imágenes y sus scores
             if "resultados" in st.session_state:
                 for i, (img, score) in enumerate(st.session_state["resultados"]):
-                    if score[0] > 0.2:
+                    if score[0] >= st.session_state["umbral"]: # si el score es mayor al umbral
                         st.markdown(f"#### <span style='color: green;'>{i+1}.- Score: {score[0]:.4f}</span>", unsafe_allow_html=True)
                         st.image(img,width=300)
-                    else:
+                    else: # si el score es menor o igual al umbral
                         st.markdown(f"#### <span style='color: red;'>{i+1}.- Score: {score[0]:.4f}</span>", unsafe_allow_html=True)
                         st.image(img,width=300)  
-        with colB:
+
+        with colB: #Generar imagen con dalle si el score de la mejor imagen es menor al umbral
             st.subheader("Generar imagen con DALL-E 3")
             if st.session_state["mejor_score"] < st.session_state["umbral"]:
                 # Generar imagen con DALL-E 3
                 if st.button("Generar imagen con DALL-E 3", key="generar_imagen_dalle"):
-                    #url = generar_imagen(concepto)
+                    #url = generar_imagen(concepto) #generar imagen con dalle
                     url = "imagenDalle.png" #simular la generacion de imagen
                     st.session_state["url_dalle"] = url
 
                 if st.session_state.get("url_dalle"):
                     st.image(st.session_state["url_dalle"], caption="Imagen generada por DALL-E 3", width=300)
-                    #st.image("imagenDalle.png", caption="Imagen generada por DALL-E 3", width=300)
             else:
                 st.warning("El score de la mejor imagen es mayor al umbral, no se generará una imagen con DALL-E 3.")
+
+            #resetear url de dalle
             st.session_state["url_dalle"] = None
